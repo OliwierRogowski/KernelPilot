@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "generator-code": "^1.12.0"
+  },
+  "devDependencies": {
+    "eslint": "^10.12.0",
+    "typescript": "^7.0.2"
+  }
+}
