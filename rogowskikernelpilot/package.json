@@ -12,10 +12,32 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kernelpilot",
+          "title": "KernelPilot",
+          "icon": "media/logo.svg"
+        }
+      ]
+    },
+    "views": {
+      "kernelpilot":[
+        {
+          "type": "webview",
+          "id": "kernelpilot.chat",
+          "name": "Chat"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "rogowskikernelpilot.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "rogowskikernelpilot.explainSelection",
+        "title": "KernelPilot: Explain selected code"
       }
     ]
   },
