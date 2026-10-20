@@ -2,16 +2,16 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch Extension",
+            "name": "Run KernelPilot Extension",
             "type": "extensionHost",
             "request": "launch",
             "args": [
                 "--extensionDevelopmentPath=${workspaceFolder}/rogowskikernelpilot"
             ],
             "outFiles": [
-                "${workspaceFolder}/dist/**/*.js"
+                "${workspaceFolder}/rogowskikernelpilot/dist/**/*.js"
             ],
-            "preLaunchTask": "${defaultBuildTask}"
+            "preLaunchTask": "KernelPilot: compile extension"
         }
     ]
 }

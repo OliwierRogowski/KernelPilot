@@ -1,0 +1,4 @@
+{
+    "cmake.sourceDirectory": "/home/admin/Dokumenty/KernelPilot/rogowskikernelpilot/native-analyzer",
+    "kernelpilot.codingModel": "qwen2.5-coder:3b"
+}

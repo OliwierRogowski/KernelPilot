@@ -12,6 +12,41 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "KernelPilot",
+      "properties": {
+        "kernelpilot.analyzerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the KernelPilot native analyzer executable. Leave empty to use native-analyzer/build/kernelpilot-analyzer in the extension folder."
+        },
+        "kernelpilot.benchmarkCompiler": {
+          "type": "string",
+          "default": "",
+          "description": "Compiler executable for native benchmarks. Leave empty to use gcc for C and g++ for C++."
+        },
+        "kernelpilot.cudaCompiler": {
+          "type": "string",
+          "default": "nvcc",
+          "description": "CUDA compiler executable used to compile AI-generated CPU/GPU comparison programs."
+        },
+        "kernelpilot.cpuCompiler": {
+          "type": "string",
+          "default": "g++",
+          "description": "C++ compiler used to syntax-check AI-generated CPU conversions."
+        },
+        "kernelpilot.chatModel": {
+          "type": "string",
+          "default": "llama4:maverick",
+          "description": "Ollama model used for the KernelPilot chat panel."
+        },
+        "kernelpilot.codingModel": {
+          "type": "string",
+          "default": "llama4:maverick",
+          "description": "Ollama code model used to generate benchmark harnesses, CUDA implementations, and performance recommendations."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -38,6 +73,30 @@
       {
         "command": "rogowskikernelpilot.explainSelection",
         "title": "KernelPilot: Explain selected code"
+      },
+      {
+        "command": "rogowskikernelpilot.analyzeFile",
+        "title": "KernelPilot: Analyze current C/C++ file"
+      },
+      {
+        "command": "rogowskikernelpilot.analyzeWithAI",
+        "title": "KernelPilot: Review code with local AI"
+      },
+      {
+        "command": "rogowskikernelpilot.benchmark",
+        "title": "KernelPilot: Benchmark file or selection"
+      },
+      {
+        "command": "rogowskikernelpilot.convertCuda",
+        "title": "KernelPilot: Convert file or selection to CUDA"
+      },
+      {
+        "command": "rogowskikernelpilot.convertCpu",
+        "title": "KernelPilot: Convert CUDA file or selection to CPU"
+      },
+      {
+        "command": "rogowskikernelpilot.cudaHelp",
+        "title": "KernelPilot: CUDA programming help"
       }
     ]
   },
