@@ -9,6 +9,7 @@ export interface GpuBackendDecision {
 export interface RecordedGpuBackendDecision extends GpuBackendDecision {
     source: 'model' | 'fallback' | 'unsupported';
     model: string;
+    modelDecision?: GpuBackendDecision;
 }
 
 export interface BenchmarkAdapter {
@@ -16,6 +17,22 @@ export interface BenchmarkAdapter {
     schema_version: 1;
     workload_sizes: [number, number, number];
     adapter: string;
+}
+
+export function recordUserRequestedCudaAttempt(modelDecision: GpuBackendDecision, model: string): RecordedGpuBackendDecision {
+    return {
+        ...modelDecision,
+        decision: 'benchmark_cuda',
+        confidence: 0,
+        reason: `User-requested benchmark: CUDA validation is attempted; model recommendation: ${modelDecision.decision} (${modelDecision.reason}). This does not imply a speedup.`,
+        source: 'fallback',
+        model,
+        modelDecision
+    };
+}
+
+export function unavailableCudaComparison(status: string): string {
+    return `CPU/CUDA comparison is unresolved because no actual CUDA samples were collected. Cause: ${status}. There is no evidence to establish CPU or GPU superiority. Suggestions such as par_unseq or parallel initialization are hypotheses that require separate measurements.`;
 }
 
 export function parseGpuBackendDecision(response: string): GpuBackendDecision | undefined {
