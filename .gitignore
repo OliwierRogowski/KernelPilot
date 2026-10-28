@@ -1,0 +1,19 @@
+# Local credentials and environment
+.env
+.env.*
+!.env.example
+
+# Installed dependencies and editor test downloads
+**/node_modules/
+**/.vscode-test/
+**/out/
+**/native-analyzer/build/
+
+# Local KernelPilot runs, profiles, and experiment artifacts
+**/.kernelpilot/
+*.log
+
+# Python/editor temporary files
+__pycache__/
+*.py[cod]
+.DS_Store

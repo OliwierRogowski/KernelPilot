@@ -1,0 +1,3 @@
+.vscode-test/
+out/
+native-analyzer/build/

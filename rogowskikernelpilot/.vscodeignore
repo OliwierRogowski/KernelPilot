@@ -1,8 +1,14 @@
 .vscode/**
 .vscode-test/**
-out/**
-node_modules/**
+.github/**
 src/**
+node_modules/**
+out/**
+native-analyzer/build/**
+examples/**
+coverage/**
+dist/**/*.map
+*.tsbuildinfo
 .gitignore
 .yarnrc
 esbuild.js
@@ -12,3 +18,5 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+**/.env
+**/.env.*

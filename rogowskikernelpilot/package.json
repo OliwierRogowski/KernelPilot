@@ -1,7 +1,7 @@
 {
   "name": "rogowskikernelpilot",
   "displayName": "KernelPilot",
-  "description": "",
+  "description": "Analyze existing CUDA kernels and validate model-assisted optimization proposals with correctness tests and GPU measurements.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.140.0"
@@ -15,6 +15,52 @@
     "configuration": {
       "title": "KernelPilot",
       "properties": {
+        "kernelpilot.modelProvider": {
+          "type": "string",
+          "enum": ["ollama", "openai-compatible"],
+          "default": "openai-compatible",
+          "description": "Chat API protocol. OpenAI-compatible endpoints are supported when they implement /v1/chat/completions."
+        },
+        "kernelpilot.modelEndpoint": {
+          "type": "string",
+          "default": "https://api.meta.ai/v1",
+          "description": "Fallback base URL. KERNELPILOT_AI_BASE_URL in environment/.env takes precedence; remote compatible endpoints require HTTPS."
+        },
+        "kernelpilot.cudaOptimizationProfile": {
+          "type": "string",
+          "enum": ["balanced", "memory-bound", "compute-bound", "latency-sensitive", "numerical-accuracy"],
+          "default": "balanced",
+          "description": "Optimization objective supplied to the model; it does not change validation requirements."
+        },
+        "kernelpilot.cudaValidationHarness": {
+          "type": "string",
+          "default": "",
+          "description": "Optional workspace-relative independent .cu harness. It must include the source using #include KERNELPILOT_KERNEL_SOURCE and emit KP_RESULT,<case>,PASS|FAIL,<median_ms>,<p95_ms> records after deterministic correctness checks and synchronized repeated GPU timing."
+        },
+        "kernelpilot.cudaArchitecture": {
+          "type": "string",
+          "default": "",
+          "description": "Optional CUDA target such as sm_80. When empty, KernelPilot uses the detected GPU compute capability; if no GPU is detected, nvcc chooses its default."
+        },
+        "kernelpilot.cudaProfileTranslationUnit": {
+          "type": "string",
+          "default": "",
+          "description": "Optional workspace-relative .cu translation unit that invokes the selected .cu/.cuh function or kernel. Required when KernelPilot cannot identify a unique calling program."
+        },
+        "kernelpilot.cudaProfileWarmupRuns": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Number of full-program warmup executions before CUDA source profiling. User program side effects are repeated."
+        },
+        "kernelpilot.cudaProfileRepetitions": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Number of full-program measured executions for CUDA source profiling. User program side effects are repeated."
+        },
         "kernelpilot.analyzerPath": {
           "type": "string",
           "default": "",
@@ -28,7 +74,7 @@
         "kernelpilot.cudaCompiler": {
           "type": "string",
           "default": "nvcc",
-          "description": "CUDA compiler executable used to compile AI-generated CPU/GPU comparison programs."
+          "description": "CUDA compiler executable used for the existing .cu experiment workflow and generated comparisons."
         },
         "kernelpilot.cpuCompiler": {
           "type": "string",
@@ -37,13 +83,13 @@
         },
         "kernelpilot.chatModel": {
           "type": "string",
-          "default": "llama4:maverick",
-          "description": "Ollama model used for the KernelPilot chat panel."
+          "default": "muse-spark-1.3",
+          "description": "Model identifier for chat. Set this to the exact model ID available through the configured provider."
         },
         "kernelpilot.codingModel": {
           "type": "string",
-          "default": "llama4:maverick",
-          "description": "Ollama code model used to generate benchmark harnesses, CUDA implementations, and performance recommendations."
+          "default": "muse-spark-1.3",
+          "description": "Model identifier for code and benchmark tasks. Set this to the exact model ID available through the configured provider."
         }
       }
     },
@@ -79,12 +125,32 @@
         "title": "KernelPilot: Analyze current C/C++ file"
       },
       {
+        "command": "rogowskikernelpilot.optimizeCuda",
+        "title": "KernelPilot: Analyze and propose optimization for existing .cu"
+      },
+      {
+        "command": "rogowskikernelpilot.validateCudaExperiment",
+        "title": "KernelPilot: Compile, validate, and benchmark CUDA experiment"
+      },
+      {
+        "command": "rogowskikernelpilot.exportCudaExperimentReport",
+        "title": "KernelPilot: Export CUDA experiment report"
+      },
+      {
         "command": "rogowskikernelpilot.analyzeWithAI",
         "title": "KernelPilot: Review code with local AI"
       },
       {
+        "command": "rogowskikernelpilot.testModelConnection",
+        "title": "KernelPilot: Test configured model connection"
+      },
+      {
         "command": "rogowskikernelpilot.benchmark",
         "title": "KernelPilot: Benchmark file or selection"
+      },
+      {
+        "command": "rogowskikernelpilot.profileBottlenecks",
+        "title": "KernelPilot: Profile Bottlenecks"
       },
       {
         "command": "rogowskikernelpilot.convertCuda",
@@ -98,7 +164,16 @@
         "command": "rogowskikernelpilot.cudaHelp",
         "title": "KernelPilot: CUDA programming help"
       }
-    ]
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "rogowskikernelpilot.profileBottlenecks",
+          "when": "editorLangId == c || editorLangId == cpp || editorLangId == cuda-cpp || resourceExtname == .cu || resourceExtname == .cuh",
+          "group": "navigation@8"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
