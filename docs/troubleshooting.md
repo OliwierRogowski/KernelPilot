@@ -22,6 +22,20 @@
 - Candidate runtime requires supported Linux Bubblewrap filesystem/process namespaces. If the preflight fails, runtime execution is refused; do not disable isolation to get a result.
 - A candidate can still hang or exhaust resources on the shared GPU. Runtime isolation does not make arbitrary GPU kernels safe.
 
+## Nsight Compute permission or export failure
+
+- Run **KernelPilot: Check NVIDIA Diagnostics Environment** to confirm the tool path/version, GPU visibility, and the basic capability-query result. A successful query is not proof that the hardware counters can be collected during a kernel profile.
+- If `ncu` reports `ERR_NVGPUCTRPERM` (or a counter access error), the profile is permission-denied and metric data remains unavailable. KernelPilot does not change driver settings or system permissions; ask the system administrator about the supported counter-access policy.
+- A `.ncu-rep` is a profiler report artifact, not a `.cu` source file. It exists only after Nsight Compute successfully exports it. An empty output, nonzero exit, permission error, or incompatible CLI output does not create a valid report.
+- Parser fixtures and fake Nsight CLIs test saved report formats and error handling only. The last recorded actual profile attempt on the RTX A2000 Laptop GPU returned `ERR_NVGPUCTRPERM`, so actual counter collection and report export remain unverified in that environment.
+
+## Comparing optimization reports
+
+- Confirm the reports have matching GPU, input hash/size, parameters, and timing scope. Missing metadata is uncertainty; material differences make the comparison incomparable.
+- For fewer than five raw samples on either side, or summary-only older reports, expect a descriptive result without a directional uncertainty conclusion.
+- The bootstrap assumes independent representative samples. It cannot remove thermal drift or separate-run ordering effects; repeat measurements if an apparent change is near the practical threshold.
+- A candidate marked failed/incorrect cannot be recommended. A missing validation field or `tool-error` is not evidence that the candidate is correct.
+
 ## Existing CUDA profile has no samples
 
 The command may find launch syntax in source that never executes. Inspect the profiler output's detected launch sites and its finalization record:

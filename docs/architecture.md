@@ -11,6 +11,9 @@ KernelPilot is a local VS Code extension. It has no hosted backend or project da
 | `cudaConversion.ts` | Build conversion prompts, extract candidate CUDA code, validate structural/type evidence, and run bounded compiler repair. |
 | `cudaExperiment.ts` | Lexically inspect CUDA sources, preserve immutable experiment inputs, parse model proposals, and render experiment reports. |
 | `cudaValidation.ts` | Validate user-harness correctness and benchmark result records, matched cases, speedup policy, and regressions. |
+| `cudaResultValidation.ts` | Generate one deterministic shared input, run the reference and candidate separately, parse typed indexed outputs, compare exact integers/tolerant floats, and save/attach correctness reports. |
+| `nvidiaDiagnostics.ts` | Detect NVIDIA tools and GPU access, run optional Nsight Compute and Compute Sanitizer checks, and record raw artifacts/statuses. |
+| `reportComparison.ts` | Normalize benchmark/profile/diagnostic report variants, check comparability, bootstrap raw timing samples, gate recommendations on correctness, and render Markdown exports. |
 | `cudaProfileConfiguration.ts`, `cudaSourceProfiler.ts` | Resolve direct-profile build flags, find original launch sites, generate a temporary instrumented copy, parse runtime event records, and preserve launch/copy metadata. |
 | `benchmarkTarget.ts`, `benchmarkWorkload.ts`, `matrixBenchmarkOracle.ts` | Identify candidate targets/workloads and provide source-anchored test/oracle helpers for supported benchmark paths. |
 | `matmulCudaHarness.ts`, `genericCudaHarness.ts`, `cudaMetrics.ts` | Build CUDA benchmark runners and parse validated per-phase timing/correctness protocols. |

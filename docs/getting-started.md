@@ -54,6 +54,8 @@ Benchmark paths are not universal: some target algorithms require an adapter or 
 
 For direct profiling of existing code, including `.cuh` caller selection and the zero-runtime-launch case, see [Profiling](profiling.md).
 
+The extension also provides **KernelPilot: Check NVIDIA Diagnostics Environment** to inspect tool, driver, GPU, and counter-access availability; **KernelPilot: Run Nsight Compute and Sanitizer** for optional diagnostics; **KernelPilot: Validate CUDA Results Against Reference** for a declared input/output protocol; and **KernelPilot: Compare Optimization Reports** for two saved reports. These workflows are separate from ordinary benchmark timing. See [Benchmarking](benchmarking.md), [Profiling](profiling.md), and [Configuration](configuration.md) for their contracts and limitations.
+
 ## VS Code settings
 
 Open Settings and search for `KernelPilot`. The model provider, endpoint, and model can also be provided through environment variables or the repository-root `.env`. CUDA compiler, architecture, harness, calling translation unit, and profile repetition settings are described in [Configuration](configuration.md).

@@ -1,44 +1,28 @@
-# KernelPilot readiness audit
+# KernelPilot repository audit
 
-## Repository baseline
+This audit accompanies the current feature and documentation update. See [TEST_REPORT.md](TEST_REPORT.md) for dated checks and evidence categories.
 
-- The repository's `origin` remote points to `OliwierRogowski/KernelPilot`.
-- During this audit, the remote was reachable and reported as public with `main` as the default branch.
-- There are no Git tags. The observed `origin/main` and local `github-export` baseline is `0cf7db9` (`Prepare KernelPilot hackathon export`). This commit is the practical comparison point, not a tagged release.
-- The current worktree contains uncommitted product, test, build, and documentation changes. No release tag is created by this preparation.
-- The repository has no license file. No license has been added; the maintainer must choose one before making a licensing claim.
+## Repository and release state
 
-## Verified product boundaries
+- GitHub repository: [OliwierRogowski/KernelPilot](https://github.com/OliwierRogowski/KernelPilot).
+- Work branch: `github-export`, tracking `origin/github-export`. At the start of this work it matched the remote tip (`00a11b2`); publication status is reported by the resulting commit/push, not assumed here.
+- `main` remains the repository default branch. No release tag, Marketplace listing, or VSIX release is claimed.
+- No license file is present; no reuse license is implied.
 
-- The native analyzer provides Clang-backed C/C++ source analysis; findings are static and heuristic.
-- Model transport supports Ollama and a limited OpenAI-compatible chat-completions subset. Live account/provider availability must be tested by the user.
-- CUDA conversion and optimization proposals are candidates, not correctness claims. The `.cu` experiment workflow relies on a separate user-authored validation harness.
-- Structured benchmark paths validate device/correctness/timing records and compare matching timer scopes and sample IDs. A harness's claimed oracle is not independently proved by the extension.
-- Direct CUDA source profiling measures only runtime events around reached original launches and supported asynchronous copies. It reports correctness as not independently verified when no separate oracle is run.
-- Candidate runtime isolation depends on supported Linux Bubblewrap namespaces. Compiler execution is resource-limited and consent-gated but not OS-sandboxed.
-- There is no published Marketplace listing or VSIX release. `npm run package` creates a production bundle, not a VSIX.
+## Product boundaries checked
 
-## Confirmed direct CUDA diagnostic
+- The native C/C++ analyzer is Clang-backed and static; its findings are not runtime GPU measurements.
+- AI transport supports Ollama and a limited OpenAI-compatible chat-completions interface.
+- CUDA proposals preserve the original source and remain candidates until an independent correctness check and comparable benchmark support them.
+- Reference-result validation requires the documented shared-input/output protocol; it does not infer comparable values from arbitrary `.cu` files.
+- Ordinary benchmarks, explicit reference validation, direct CUDA-event profiling, Nsight Compute, and Compute Sanitizer are separate executions and report fields.
+- Report comparison checks provenance and available samples; missing metadata is uncertainty. A failed candidate cannot be recommended.
+- Runtime candidate isolation depends on Linux Bubblewrap support. Compilation is consent-gated and resource-limited but not filesystem/network sandboxed; GPU reset, hang, and memory exhaustion are not guaranteed to be contained.
 
-The supplied `cuda-interface-engine/src/cpu/xxxxx.cu` was compiled and run through the production **KernelPilot: Profile Bottlenecks** command in the extension-host integration test. Its `main()` fills a vector and calls only the CPU `sumOfSquares` in a 20-iteration loop. It does not call the existing `sumOfSquaresGPU` function. The two detected launch expressions are inside that unused GPU helper. The instrumented finalizer correctly records zero runtime launches for all measured runs; the profiler must therefore report zero samples rather than claim a CUDA profile.
+## NVIDIA verification boundary
 
-This is a source call-path limitation, not a failed CUDA event measurement. The direct profiler cannot infer or inject the user's intended data, wrapper invocation, or control flow. See [Profiling](docs/profiling.md).
+The installed GPU and NVIDIA CLI versions are recorded in [TEST_REPORT.md](TEST_REPORT.md). Compute Sanitizer detected the intended issues in all four faulty example programs during timeout-bounded actual runs. Nsight Compute returned `ERR_NVGPUCTRPERM` during the recorded actual profile attempt. Actual counter collection and successful `.ncu-rep` export remain unverified. No driver setting or system permission was changed. Fake CLI tests and saved CSV parser fixtures are not actual profiling.
 
-## Security and publication checks
+## Publication and local files
 
-- `.env` is ignored and is not tracked at the selected baseline. The repository template must contain placeholders only.
-- The baseline secret scan found no high-confidence provider token, private-key, or long secret assignment in tracked project files or scanned history. Dependency trees were excluded from this source scan and are being removed from the current Git index as vendored local dependencies.
-- The repository's top-level `node_modules` trees are unnecessary for source distribution and should be ignored/untracked without deleting local files.
-- Profile/experiment directories, VS Code test downloads, output, and native analyzer build output are local artifacts and are excluded by Git ignore rules.
-- No GitHub CLI or authenticated GitHub connector was available during preparation. Read-only API access confirmed the existing destination; push permission and branch protection could not be verified. No push or PR is claimed.
-
-## Current verification
-
-See [TEST_REPORT.md](TEST_REPORT.md) for the exact commands, environment, passed/pending counts, GPU evidence, and the direct-profile zero-launch result. See [CHANGELOG.md](CHANGELOG.md) for changes relative to the baseline.
-
-## Remaining release decisions
-
-1. Revoke and replace any provider credential that was exposed outside its private `.env` file.
-2. Select a repository license before adding a license file or claiming a reuse license.
-3. Confirm GitHub write access and the appropriate branch/PR procedure before publishing the prepared branch.
-4. Decide whether the untracked optional fine-tuning data/report are part of this publication; their provenance and license suitability are not independently verified.
+The root `.env`, generated `.kernelpilot` reports, dependency trees, test downloads, and native build output are local artifacts and should not be published. The `.gitignore` rules exclude these paths. The README/example changes and source tests are project files; generated extension `dist/` output is tracked in this repository and is rebuilt by the project compile command.

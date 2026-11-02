@@ -76,6 +76,21 @@
           "default": "nvcc",
           "description": "CUDA compiler executable used for the existing .cu experiment workflow and generated comparisons."
         },
+        "kernelpilot.cudaResultValidationInputCount": { "type": "integer", "default": 64, "minimum": 1, "maximum": 1000000, "description": "Number of deterministic float64 values supplied to both programs in CUDA result validation." },
+        "kernelpilot.cudaResultValidationTimeoutMs": { "type": "integer", "default": 30000, "minimum": 1000, "maximum": 3600000, "description": "Timeout for each reference/candidate correctness run." },
+        "kernelpilot.cudaResultValidationAbsoluteTolerance": { "type": "number", "default": 0.000001, "minimum": 0, "description": "Absolute floating-point comparison tolerance for CUDA result validation." },
+        "kernelpilot.cudaResultValidationRelativeTolerance": { "type": "number", "default": 0.00001, "minimum": 0, "description": "Relative floating-point comparison tolerance for CUDA result validation." },
+        "kernelpilot.cudaResultValidationReportDirectory": { "type": "string", "default": ".kernelpilot/cuda-result-validation", "description": "Workspace-relative directory for input, raw output and JSON correctness reports." },
+        "kernelpilot.reportComparisonPracticalChangePercent": { "type": "number", "default": 3, "minimum": 0, "maximum": 100, "description": "Minimum performance change required in addition to the bootstrap interval when comparing reports." },
+        "kernelpilot.nvidiaDiagnosticsEnabled": { "type": "boolean", "default": false, "description": "Enable the optional Nsight Compute and Compute Sanitizer diagnostic command." },
+        "kernelpilot.ncuPath": { "type": "string", "default": "ncu", "description": "Nsight Compute CLI executable path." },
+        "kernelpilot.computeSanitizerPath": { "type": "string", "default": "compute-sanitizer", "description": "Compute Sanitizer executable path." },
+        "kernelpilot.nvidiaDiagnosticsTimeoutMs": { "type": "integer", "default": 120000, "minimum": 1000, "maximum": 3600000, "description": "Timeout for each NVIDIA tool invocation." },
+        "kernelpilot.nvidiaDiagnosticsReportDirectory": { "type": "string", "default": ".kernelpilot/nvidia-diagnostics", "description": "Workspace-relative directory for JSON, text, and raw Nsight Compute reports." },
+        "kernelpilot.ncuKernelRegex": { "type": "string", "default": ".*", "description": "Nsight Compute kernel name regular expression." },
+        "kernelpilot.ncuLaunchCount": { "type": "integer", "default": 1, "minimum": 1, "maximum": 10000, "description": "Maximum matching kernel launches profiled by ncu." },
+        "kernelpilot.ncuMetrics": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Optional metric names. Empty detects available candidate metrics dynamically." },
+        "kernelpilot.computeSanitizerTools": { "type": "array", "items": { "type": "string", "enum": ["memcheck", "racecheck", "initcheck", "synccheck"] }, "default": [], "description": "Sanitizer checks to run. Empty disables sanitizer runs." },
         "kernelpilot.cpuCompiler": {
           "type": "string",
           "default": "g++",
@@ -152,6 +167,10 @@
         "command": "rogowskikernelpilot.profileBottlenecks",
         "title": "KernelPilot: Profile Bottlenecks"
       },
+      { "command": "rogowskikernelpilot.nvidiaDiagnostics", "title": "KernelPilot: Run Nsight Compute and Sanitizer" },
+      { "command": "rogowskikernelpilot.checkNvidiaDiagnosticsEnvironment", "title": "KernelPilot: Check NVIDIA Diagnostics Environment" },
+      { "command": "rogowskikernelpilot.validateCudaResults", "title": "KernelPilot: Validate CUDA Results Against Reference" },
+      { "command": "rogowskikernelpilot.compareOptimizationReports", "title": "KernelPilot: Compare Optimization Reports" },
       {
         "command": "rogowskikernelpilot.convertCuda",
         "title": "KernelPilot: Convert file or selection to CUDA"

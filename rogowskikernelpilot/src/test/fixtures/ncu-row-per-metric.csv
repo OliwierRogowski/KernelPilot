@@ -1,0 +1,4 @@
+"ID","Process ID","Kernel Name","Metric Name","Metric Unit","Metric Value"
+"0","123","first kernel","sm__throughput.avg.pct_of_peak_sustained_elapsed","%","72.5"
+"1","123","second kernel","dram__throughput.avg.pct_of_peak_sustained_elapsed","%","N/A"
+"2","123","first kernel","dram__throughput.avg.pct_of_peak_sustained_elapsed","%","81.0"

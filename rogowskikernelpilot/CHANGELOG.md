@@ -1,9 +1,4 @@
-# Change Log
+# Extension changelog
 
-All notable changes to the "rogowskikernelpilot" extension will be documented in this file.
-
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
-
-## [Unreleased]
-
-- Initial release
+The canonical project changelog is maintained in the [repository root](../CHANGELOG.md).
+This extension subdirectory does not keep a separate release history.

@@ -2,12 +2,17 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { GpuBackendDecision } from '../benchmarkBackendDecision';
+import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import * as os from 'node:os';
 
 const benchmarkOutputLines: string[] = [];
 let previousCodingModel: string | undefined;
 let codingModelWasChanged = false;
 let activeTestModel = '';
 let originalWarningMessage: ((...args: unknown[]) => Promise<unknown>) | undefined;
+let fakeToolRoot = '';
+let diagnosticMarker = '';
+let previousDiagnostics: Record<string, unknown> = {};
 
 suite('Benchmark command', () => {
 	suiteSetup(async function () {
@@ -37,6 +42,18 @@ suite('Benchmark command', () => {
 		previousCodingModel = configuration.inspect<string>('codingModel')?.globalValue;
 		await configuration.update('codingModel', activeTestModel, vscode.ConfigurationTarget.Global);
 		codingModelWasChanged = true;
+		fakeToolRoot = await mkdtemp(path.join(os.tmpdir(), 'kernelpilot benchmark diagnostic guard '));
+		diagnosticMarker = path.join(fakeToolRoot, 'diagnostic-tool-ran');
+		const fakeNcu = path.join(fakeToolRoot, 'fake ncu'); const fakeSanitizer = path.join(fakeToolRoot, 'fake sanitizer');
+		for (const tool of [fakeNcu, fakeSanitizer]) {
+			await writeFile(tool, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${diagnosticMarker}'\necho 'fake NVIDIA tool should not run during ordinary Benchmark'\nexit 0\n`);
+			await chmod(tool, 0o700);
+		}
+		const nvidiaConfig = vscode.workspace.getConfiguration('kernelpilot');
+		for (const key of ['nvidiaDiagnosticsEnabled', 'ncuPath', 'computeSanitizerPath'] as const) {previousDiagnostics[key] = nvidiaConfig.inspect(key)?.globalValue;}
+		await nvidiaConfig.update('nvidiaDiagnosticsEnabled', true, vscode.ConfigurationTarget.Global);
+		await nvidiaConfig.update('ncuPath', fakeNcu, vscode.ConfigurationTarget.Global);
+		await nvidiaConfig.update('computeSanitizerPath', fakeSanitizer, vscode.ConfigurationTarget.Global);
 		const testWindow = vscode.window as unknown as { showWarningMessage: (...args: unknown[]) => Promise<unknown> };
 		originalWarningMessage = testWindow.showWarningMessage.bind(vscode.window);
 		testWindow.showWarningMessage = async (...args) => {
@@ -51,6 +68,11 @@ suite('Benchmark command', () => {
 		if (originalWarningMessage) {
 			(vscode.window as unknown as { showWarningMessage: (...args: unknown[]) => Promise<unknown> }).showWarningMessage = originalWarningMessage;
 		}
+		if (fakeToolRoot) {
+			const configuration = vscode.workspace.getConfiguration('kernelpilot');
+			for (const key of ['nvidiaDiagnosticsEnabled', 'ncuPath', 'computeSanitizerPath'] as const) {await configuration.update(key, previousDiagnostics[key], vscode.ConfigurationTarget.Global);}
+			await rm(fakeToolRoot, { recursive: true, force: true });
+		}
 		if (!codingModelWasChanged) {
 			return;
 		}
@@ -64,6 +86,13 @@ suite('Benchmark command', () => {
 	test('benchmarks a main-only scalar reduction', async function () {
 		this.timeout(600000);
 		await benchmarkExample('sum_of_squares.cpp', 'scalar reduction');
+	});
+
+	test('ordinary Benchmark saves timing results and never invokes NVIDIA tools with diagnostics disabled or enabled', async function () {
+		this.timeout(600000);
+		await benchmarkExample('array_sum.cpp', 'ordinary Benchmark with NVIDIA diagnostics disabled', { nvidiaEnabled: false });
+		await benchmarkExample('array_sum.cpp', 'ordinary Benchmark with NVIDIA diagnostics enabled', { nvidiaEnabled: true });
+		await assert.rejects(access(diagnosticMarker), { code: 'ENOENT' });
 	});
 
 	test('benchmarks array sum reduction with verified CUDA phases', async function () {
@@ -119,8 +148,9 @@ interface ObservedBackendDecision extends GpuBackendDecision {
 async function benchmarkExample(
 	exampleName: string,
 	description: string,
-	options: { profileMode?: boolean; requireCuda?: boolean; expectedChecksums?: Array<[number, number]>; expectedSizes?: [number, number, number]; expectedAdapterPath?: string } = {}
+	options: { profileMode?: boolean; requireCuda?: boolean; expectedChecksums?: Array<[number, number]>; expectedSizes?: [number, number, number]; expectedAdapterPath?: string; nvidiaEnabled?: boolean } = {}
 ): Promise<ObservedBackendDecision> {
+	if (options.nvidiaEnabled !== undefined) {await vscode.workspace.getConfiguration('kernelpilot').update('nvidiaDiagnosticsEnabled', options.nvidiaEnabled, vscode.ConfigurationTarget.Global);}
 	const outputStart = benchmarkOutputLines.length;
 	const example = vscode.Uri.file(path.join(
 		path.resolve(__dirname, '../..'),

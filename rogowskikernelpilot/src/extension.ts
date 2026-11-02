@@ -15,12 +15,15 @@ import { measuredBenchmarkRecommendation } from './benchmarkInterpretation';
 import { analyzeBottlenecks, cudaPhaseSamples as toProfilePhaseSamples, profileExperiment, type ProfilePhaseSample } from './bottleneckProfile';
 import { buildCudaEventProfilerTranslationUnit, findCudaLaunchSites, isCudaProfileFile, parseCudaCopyEventSamples, parseCudaKernelEventSamples, parseCudaRuntimeSummaries, planCudaSourceProfile, type CudaCopyEventSample, type CudaKernelEventSample } from './cudaSourceProfiler';
 import { resolveCudaCompileConfiguration, withCudaArchitecture } from './cudaProfileConfiguration';
+import { checkNvidiaDiagnosticsEnvironment, runNvidiaDiagnostics, type SanitizerTool } from './nvidiaDiagnostics';
+import { attachCudaValidationToReport, runCudaResultValidation } from './cudaResultValidation';
+import { compareKernelPilotReports, renderComparisonMarkdown, type ReportComparison } from './reportComparison';
 import { buildCudaConversionRepairContext, compileCudaWithRepairs, extractMainOnlyTransformReduction, generateCudaImplementation } from './cudaConversion';
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { cpus, totalmem, tmpdir } from 'node:os';
 
 const execFileAsync = promisify(execFile);
@@ -1915,6 +1918,196 @@ export function activate(
         try {await vscode.commands.executeCommand('rogowskikernelpilot._runBenchmark', true);}
         finally {gpuBenchmarkRunning = false;}
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('rogowskikernelpilot.nvidiaDiagnostics', async () => {
+        const config = vscode.workspace.getConfiguration('kernelpilot');
+        if (!config.get<boolean>('nvidiaDiagnosticsEnabled', false)) {
+            vscode.window.showWarningMessage('NVIDIA diagnostics are disabled. Enable kernelpilot.nvidiaDiagnosticsEnabled in Settings to run them.');
+            return;
+        }
+        const executable = await vscode.window.showInputBox({ title: 'NVIDIA diagnostics', prompt: 'Path to the already built CUDA executable', value: '' });
+        if (!executable?.trim()) {return;}
+        const argsText = await vscode.window.showInputBox({ title: 'Application arguments', prompt: 'Optional JSON array of arguments (for example ["--size", "1024"])', value: '[]', validateInput: value => {try {const parsed = JSON.parse(value); return Array.isArray(parsed) && parsed.every(item => typeof item === 'string') ? null : 'Enter a JSON array of strings.';} catch {return 'Enter a JSON array of strings.';}} });
+        if (argsText === undefined) {return;}
+        const kernelRegex = await vscode.window.showInputBox({ title: 'Kernel selection', prompt: 'Nsight Compute kernel name regular expression', value: config.get<string>('ncuKernelRegex', '.*') });
+        if (kernelRegex === undefined) {return;}
+        let workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(executable);
+        try {await access(workspace);} catch {workspace = path.dirname(path.resolve(executable));}
+        const configuredDirectory = config.get<string>('nvidiaDiagnosticsReportDirectory', '.kernelpilot/nvidia-diagnostics');
+        const reportDirectory = path.isAbsolute(configuredDirectory) ? configuredDirectory : path.resolve(workspace, configuredDirectory);
+        const reportChannel = vscode.window.createOutputChannel('KernelPilot NVIDIA Diagnostics');
+        reportChannel.clear(); reportChannel.show(true);
+        try {
+            const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Running NVIDIA diagnostics', cancellable: true }, (progress, token) => {
+                const abort = new AbortController();
+                const cancellation = token.onCancellationRequested(() => abort.abort());
+                progress.report({ message: 'Discovering metrics and tool versions…' });
+                return runNvidiaDiagnostics(executable.trim(), JSON.parse(argsText) as string[], {
+                ncuPath: config.get<string>('ncuPath', 'ncu'), sanitizerPath: config.get<string>('computeSanitizerPath', 'compute-sanitizer'), reportDirectory,
+                timeoutMs: config.get<number>('nvidiaDiagnosticsTimeoutMs', 120000), kernelRegex,
+                launchCount: config.get<number>('ncuLaunchCount', 1), metrics: config.get<string[]>('ncuMetrics', []),
+                sanitizers: config.get<SanitizerTool[]>('computeSanitizerTools', []), cwd: workspace, signal: abort.signal
+                }).finally(() => cancellation.dispose());
+            });
+            reportChannel.appendLine(`GPU: ${result.report.gpu ?? 'unavailable or not detected'}`);
+            reportChannel.appendLine(`Nsight Compute: ${result.report.profile.status}; metrics collected: ${result.report.profile.metrics.length}`);
+            for (const item of result.report.sanitizers) {reportChannel.appendLine(`${item.tool}: ${item.status}${item.exitCode === null ? '' : ` (exit ${item.exitCode})`}`);}
+            for (const observation of result.report.observations) {reportChannel.appendLine(`Measurement: ${observation}`);}
+            for (const hypothesis of result.report.hypotheses) {reportChannel.appendLine(`Hypothesis: ${hypothesis}`);}
+            for (const limitation of result.report.limitations) {reportChannel.appendLine(`Unavailable/limitation: ${limitation}`);}
+            reportChannel.appendLine(`JSON report: ${result.jsonPath}`); reportChannel.appendLine(`Raw tool output: ${result.rawPath}`);
+        } catch (error) {reportChannel.appendLine(`NVIDIA diagnostics failed: ${getProcessDiagnostics(error)}`);}
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('rogowskikernelpilot.checkNvidiaDiagnosticsEnvironment', async () => {
+        const config = vscode.workspace.getConfiguration('kernelpilot');
+        let workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionPath;
+        try {await access(workspace);} catch {workspace = context.extensionPath;}
+        const configuredDirectory = config.get<string>('nvidiaDiagnosticsReportDirectory', '.kernelpilot/nvidia-diagnostics');
+        const reportDirectory = path.isAbsolute(configuredDirectory) ? configuredDirectory : path.resolve(workspace, configuredDirectory);
+        const output = vscode.window.createOutputChannel('KernelPilot NVIDIA Environment');
+        output.clear(); output.show(true);
+        try {
+            const result = await checkNvidiaDiagnosticsEnvironment({
+                ncuPath: config.get<string>('ncuPath', 'ncu'), sanitizerPath: config.get<string>('computeSanitizerPath', 'compute-sanitizer'),
+                reportDirectory, timeoutMs: config.get<number>('nvidiaDiagnosticsTimeoutMs', 120000), cwd: workspace
+            });
+            const { report } = result;
+            output.appendLine(`Nsight Compute: ${report.ncu.state}; ${report.ncu.version ?? (report.ncu.details || 'version unavailable')}`);
+            output.appendLine(`Compute Sanitizer: ${report.sanitizer.state}; ${report.sanitizer.version ?? (report.sanitizer.details || 'version unavailable')}`);
+            output.appendLine(`GPU: ${report.gpu.available === true ? `${report.gpu.model ?? 'model unavailable'}; driver ${report.gpu.driverVersion ?? 'version unavailable'}` : report.gpu.available === false ? 'not detected' : 'unknown'}`);
+            output.appendLine(`Hardware counter query: ${report.counters.status}`);
+            output.appendLine(report.counters.details);
+            for (const limitation of report.limitations) {output.appendLine(`Note: ${limitation}`);}
+            output.appendLine(`JSON report: ${result.jsonPath}`); output.appendLine(`Details: ${result.rawPath}`);
+            const choice = await vscode.window.showInformationMessage(
+                `NVIDIA environment check: ncu ${report.ncu.state}, Compute Sanitizer ${report.sanitizer.state}, GPU ${report.gpu.available === true ? 'detected' : report.gpu.available === false ? 'not detected' : 'unknown'}, counters ${report.counters.status}.`,
+                'Open details', 'Save report'
+            );
+            if (choice === 'Open details') {
+                const document = await vscode.workspace.openTextDocument(vscode.Uri.file(result.jsonPath));
+                await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+            } else if (choice === 'Save report') {
+                const destination = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(workspace, 'nvidia-environment-report.json')), filters: { JSON: ['json'] } });
+                if (destination) {
+                    await vscode.workspace.fs.copy(vscode.Uri.file(result.jsonPath), destination, { overwrite: true });
+                    vscode.window.showInformationMessage(`NVIDIA environment report saved: ${destination.fsPath}`);
+                }
+            }
+        } catch (error) {
+            output.appendLine(`Environment check failed: ${getProcessDiagnostics(error)}`);
+            vscode.window.showErrorMessage(`KernelPilot NVIDIA environment check failed: ${getProcessDiagnostics(error).split(/\r?\n/).find(line => line.trim()) ?? 'Unknown error'}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('rogowskikernelpilot.validateCudaResults', async () => {
+        const config = vscode.workspace.getConfiguration('kernelpilot');
+        const chooseExecutable = async (title: string): Promise<string | undefined> => {
+            const selected = await vscode.window.showOpenDialog({ title, canSelectFiles: true, canSelectFolders: false, canSelectMany: false });
+            return selected?.[0]?.fsPath;
+        };
+        const reference = await chooseExecutable('Select reference executable'); if (!reference) {return;}
+        const candidate = await chooseExecutable('Select CUDA candidate executable'); if (!candidate) {return;}
+        const askArgs = async (title: string): Promise<string[] | undefined> => {
+            const value = await vscode.window.showInputBox({ title, prompt: 'Optional JSON array of arguments (example: ["--mode", "fast"]). KernelPilot appends --kernelpilot-input <shared input file>.', value: '[]', validateInput: text => {try {const parsed = JSON.parse(text); return Array.isArray(parsed) && parsed.every(item => typeof item === 'string') ? null : 'Enter a JSON array of strings.';} catch {return 'Enter a JSON array of strings.';}} });
+            return value === undefined ? undefined : JSON.parse(value) as string[];
+        };
+        const referenceArgs = await askArgs('Reference program arguments'); if (!referenceArgs) {return;}
+        const candidateArgs = await askArgs('CUDA candidate arguments'); if (!candidateArgs) {return;}
+        const randomSeed = randomBytes(4).readUInt32LE(0);
+        const seedText = await vscode.window.showInputBox({ title: 'Validation seed', prompt: 'Both programs will receive the same saved deterministic input vector. Reuse this seed to reproduce it.', value: String(randomSeed), validateInput: value => /^\d+$/.test(value) && Number(value) <= 0xffffffff ? null : 'Enter an integer from 0 to 4294967295.' });
+        if (seedText === undefined) {return;}
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        let workspace = workspaceFolder ?? path.dirname(candidate);
+        try {await access(workspace);} catch {workspace = context.extensionPath;}
+        const configuredDirectory = config.get<string>('cudaResultValidationReportDirectory', '.kernelpilot/cuda-result-validation');
+        const reportDirectory = path.isAbsolute(configuredDirectory) ? configuredDirectory : path.resolve(workspace, configuredDirectory);
+        const isolation = await inspectCandidateIsolation();
+        if (isolation.isolation === 'none' || isolation.isolation === 'resource-limited') {
+            vscode.window.showErrorMessage(`CUDA result validation requires filesystem/process isolation. ${isolation.details}`); return;
+        }
+        const isolationConsent = await vscode.window.showWarningMessage(
+            `Run the selected reference and CUDA candidate once each with the same generated input file? ${isolation.details}`,
+            { modal: true }, 'Run isolated validation'
+        );
+        if (isolationConsent !== 'Run isolated validation') {return;}
+        const runDirectory = await mkdtemp(path.join(tmpdir(), 'kernelpilot-cuda-validation-'));
+        try {
+            const referenceCopy = path.join(runDirectory, 'reference-program'), candidateCopy = path.join(runDirectory, 'cuda-candidate');
+            await copyFile(reference, referenceCopy); await copyFile(candidate, candidateCopy);
+            await chmod(referenceCopy, 0o700); await chmod(candidateCopy, 0o700);
+            let validation: Awaited<ReturnType<typeof runCudaResultValidation>> | undefined;
+            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Comparing CUDA candidate with reference', cancellable: true }, async (_progress, token) => {
+                const abort = new AbortController(); const cancellation = token.onCancellationRequested(() => abort.abort());
+                try {
+                    validation = await runCudaResultValidation({
+                        referenceExecutable: referenceCopy, candidateExecutable: candidateCopy,
+                        referenceDisplayPath: path.resolve(reference), candidateDisplayPath: path.resolve(candidate),
+                        referenceArgs, candidateArgs, reportDirectory, cwd: runDirectory,
+                        timeoutMs: config.get<number>('cudaResultValidationTimeoutMs', 30000),
+                        seed: Number(seedText), inputCount: config.get<number>('cudaResultValidationInputCount', 64),
+                        absoluteTolerance: config.get<number>('cudaResultValidationAbsoluteTolerance', 1e-6),
+                        relativeTolerance: config.get<number>('cudaResultValidationRelativeTolerance', 1e-5), signal: abort.signal,
+                        execute: async (executable, args, options) => {
+                            const result = await runCandidateProgram(executable, args, {
+                                cwd: options.cwd, timeout: options.timeoutMs, maxBuffer: 16 * 1024 * 1024,
+                                allowGpu: true, requireFilesystemIsolation: true,
+                                allowOpenNetwork: isolation.isolation === 'bubblewrap-network-open', signal: options.signal
+                            });
+                            return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+                        }
+                    });
+                } finally {cancellation.dispose();}
+            });
+            if (!validation) {return;}
+            const result = validation.report;
+            const output = vscode.window.createOutputChannel('KernelPilot CUDA Result Validation'); output.clear(); output.show(true);
+            output.appendLine(`Correctness validation: ${result.status}`);
+            output.appendLine(`Reference: ${result.referenceExecutable}; candidate: ${result.candidateExecutable}`);
+            output.appendLine(`Input: ${result.inputCount} float64 values; seed=${result.seed}; SHA-256=${result.inputSha256 ?? 'not created'}`);
+            output.appendLine(`Comparison: ${result.comparison ? `${result.comparison.mismatchCount ?? 'uncomparable'} mismatches; max absolute error=${result.comparison.maxAbsoluteError ?? 'n/a'}; max relative error=${result.comparison.maxRelativeError ?? 'n/a'}` : 'not performed'}`);
+            output.appendLine(`Optimization assessment: ${result.optimizationAssessment.disposition}; speedup recommendation allowed=${result.optimizationAssessment.recommendAsSpeedup}`);
+            output.appendLine(`Validation report: ${validation.jsonPath}`); output.appendLine(`Raw output: ${validation.rawPath}`); output.appendLine(`Shared input: ${validation.inputPath}`);
+            const choice = await vscode.window.showInformationMessage(`CUDA correctness validation: ${result.status}. ${result.optimizationAssessment.reason}`, 'Open report', 'Attach to existing report');
+            if (choice === 'Open report') {const document = await vscode.workspace.openTextDocument(vscode.Uri.file(validation.jsonPath)); await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);}
+            if (choice === 'Attach to existing report') {
+                const target = await vscode.window.showOpenDialog({ title: 'Select existing KernelPilot CUDA report JSON', canSelectFiles: true, canSelectFolders: false, canSelectMany: false, filters: { JSON: ['json'] } });
+                if (target?.[0]) {await attachCudaValidationToReport(target[0].fsPath, result); vscode.window.showInformationMessage(`Correctness result attached to ${target[0].fsPath}`);}
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`CUDA result validation failed: ${getProcessDiagnostics(error).split(/\r?\n/).find(line => line.trim()) ?? 'Unknown error'}`);
+        } finally {await rm(runDirectory, { recursive: true, force: true });}
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('rogowskikernelpilot.compareOptimizationReports', async () => {
+        const chooseReport = async (title: string) => {
+            const selected = await vscode.window.showOpenDialog({ title, canSelectFiles: true, canSelectFolders: false, canSelectMany: false, filters: { JSON: ['json'] } });
+            return selected?.[0];
+        };
+        const baselineUri = await chooseReport('Select baseline KernelPilot report'); if (!baselineUri) {return;}
+        const candidateUri = await chooseReport('Select candidate KernelPilot report'); if (!candidateUri) {return;}
+        let result: ReportComparison;
+        try {
+            const baseline = JSON.parse(await readFile(baselineUri.fsPath, 'utf8')) as Record<string, unknown>;
+            const candidate = JSON.parse(await readFile(candidateUri.fsPath, 'utf8')) as Record<string, unknown>;
+            const threshold = vscode.workspace.getConfiguration('kernelpilot').get<number>('reportComparisonPracticalChangePercent', 3);
+            result = compareKernelPilotReports(baseline, candidate, baselineUri.fsPath, candidateUri.fsPath, { practicalChangePercent: threshold });
+        } catch (error) {
+            vscode.window.showErrorMessage(`KernelPilot could not compare these reports: ${getProcessDiagnostics(error).split(/\r?\n/).find(line => line.trim()) ?? 'Invalid report JSON'}`); return;
+        }
+        const nonce = randomBytes(16).toString('hex'), panel = vscode.window.createWebviewPanel('kernelpilotOptimizationComparison', 'KernelPilot Optimization Comparison', vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+        const rows = result.performance.map(item => `<tr><td>${escapeHtml(item.key)}<br><small>${escapeHtml(item.scope)}</small></td><td>${item.baseline.medianMs?.toPrecision(6) ?? '—'} ms<br>n=${item.baseline.count}; spread=${item.baseline.spreadPercent?.toFixed(1) ?? '—'}%</td><td>${item.candidate.medianMs?.toPrecision(6) ?? '—'} ms<br>n=${item.candidate.count}; spread=${item.candidate.spreadPercent?.toFixed(1) ?? '—'}%</td><td>${item.speedup?.toFixed(3) ?? '—'}×</td><td>${item.timeChangePercent?.toFixed(1) ?? '—'}%</td><td>${item.result}<br><small>${item.speedupCi95 ? `95% interval ${item.speedupCi95.map(value => value.toFixed(3)).join('–')}×` : 'interval unavailable'}</small></td></tr>`).join('');
+        const comparability = result.comparability.findings.map(item => `<li><b>${escapeHtml(item.severity)} · ${escapeHtml(item.field)}</b>: ${escapeHtml(item.explanation)}<br><small>baseline: ${escapeHtml(item.baseline ?? 'missing')} · candidate: ${escapeHtml(item.candidate ?? 'missing')}</small></li>`).join('');
+        const sanitizer = (items: unknown[]) => items.length ? `<pre>${escapeHtml(JSON.stringify(items, null, 2))}</pre>` : '<p>No sanitizer results recorded.</p>';
+        const ncuRows = result.ncu.comparable.map(item => `<tr><td>${escapeHtml(item.kernel)} · launch ${escapeHtml(item.launchId)}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.baseline)} → ${escapeHtml(item.candidate)} ${escapeHtml(item.unit)}</td><td>${item.changePercent === null ? '—' : `${item.changePercent.toFixed(1)}%`}</td></tr>`).join('');
+        panel.webview.html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="${nonce}">body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:20px}section{border:1px solid var(--vscode-panel-border);padding:16px;margin:14px 0}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--vscode-panel-border);padding:8px;text-align:left;vertical-align:top}small{opacity:.8}button{margin-right:8px}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><h1>Optimization report comparison</h1><section><h2>Result: ${escapeHtml(result.overallPerformance)} · comparability: ${escapeHtml(result.comparability.status)}</h2><p>Baseline: ${escapeHtml(result.baselinePath)}<br>Candidate: ${escapeHtml(result.candidatePath)}</p><p>Correctness: baseline <b>${escapeHtml(result.correctness.baseline)}</b>, candidate <b>${escapeHtml(result.correctness.candidate)}</b>. Candidate recommendation allowed: <b>${result.correctness.candidateRecommendationAllowed ? 'yes' : 'no'}</b>.</p><p>Practical threshold: ±${result.practicalChangePercent}%. ${escapeHtml(result.recommendation.status)}: ${escapeHtml(result.recommendation.reason)}</p><button id="json">Export JSON</button><button id="markdown">Export Markdown</button></section><section><h2>Performance</h2><table><thead><tr><th>Scope</th><th>Baseline</th><th>Candidate</th><th>Speedup</th><th>Time change</th><th>Assessment</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No matching timing scopes found. No comparison concluded.</td></tr>'}</tbody></table><p>Uncertainty uses a deterministic independent percentile bootstrap of median speedup (95% interval, 5,000 resamples; at least 5 valid samples per side). It assumes representative independent samples and cannot remove thermal drift, run order, or workload differences. No directional result is based on medians alone.</p></section><section><h2>Comparability evidence</h2><ul>${comparability}</ul></section><section><h2>Recommendation evidence</h2><p>${escapeHtml(result.recommendation.reason)}</p><ul>${result.recommendation.evidence.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section><section><h2>Compute Sanitizer</h2><h3>Baseline</h3>${sanitizer(result.sanitizers.baseline)}<h3>Candidate</h3>${sanitizer(result.sanitizers.candidate)}</section><section><h2>Nsight Compute metrics</h2><table><thead><tr><th>Kernel / launch</th><th>Metric</th><th>Baseline → candidate</th><th>Change</th></tr></thead><tbody>${ncuRows || '<tr><td colspan="4">No metrics matched with an unambiguous kernel, launch, and same unit.</td></tr>'}</tbody></table><ul>${result.ncu.unavailable.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section><script nonce="${nonce}">const vscode=acquireVsCodeApi();document.getElementById('json').addEventListener('click',()=>vscode.postMessage({type:'export',format:'json'}));document.getElementById('markdown').addEventListener('click',()=>vscode.postMessage({type:'export',format:'markdown'}));</script></body></html>`;
+        panel.webview.onDidReceiveMessage(async message => {
+            if (message?.type !== 'export' || !['json', 'markdown'].includes(message.format)) {return;}
+            const format = message.format as 'json' | 'markdown', destination = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(path.dirname(candidateUri.fsPath), `comparison-${Date.now()}.${format === 'json' ? 'json' : 'md'}`)), filters: format === 'json' ? { JSON: ['json'] } : { Markdown: ['md'] } });
+            if (!destination) {return;}
+            const destinationPath = await realpath(path.dirname(destination.fsPath)).then(directory => path.join(directory, path.basename(destination.fsPath))).catch(() => path.resolve(destination.fsPath));
+            const sourcePaths = await Promise.all([baselineUri.fsPath, candidateUri.fsPath].map(file => realpath(file).catch(() => path.resolve(file))));
+            if (sourcePaths.includes(destinationPath)) {vscode.window.showErrorMessage('Choose a new output file; source reports are read-only and cannot be overwritten.'); return;}
+            await writeFile(destination.fsPath, format === 'json' ? `${JSON.stringify(result, null, 2)}\n` : renderComparisonMarkdown(result), { encoding: 'utf8', mode: 0o600 });
+            vscode.window.showInformationMessage(`Comparison exported: ${destination.fsPath}`);
+        });
+    }));
     context.subscriptions.push(
         vscode.commands.registerCommand(
             'rogowskikernelpilot._runBenchmark',
@@ -3196,7 +3389,8 @@ async function profileExistingCudaSource(context: vscode.ExtensionContext, input
             { location: vscode.ProgressLocation.Notification, title: 'KernelPilot: profiling existing CUDA code', cancellable: true },
             async (progress, token) => {
                 let cancelled = false;
-                const cancellation = token.onCancellationRequested(() => { cancelled = true; });
+                const diagnosticsAbort = new AbortController();
+                const cancellation = token.onCancellationRequested(() => { cancelled = true; diagnosticsAbort.abort(); });
                 const checkCancelled = () => {if (cancelled) {throw new Error('Profiling was cancelled by the user.');}};
                 const plan = planCudaSourceProfile(input.file, input.source, input.selected ? input.target : '');
                 let unitPath = input.file;
@@ -3222,7 +3416,7 @@ async function profileExistingCudaSource(context: vscode.ExtensionContext, input
                     if (!/\.cu$/i.test(unitPath)) {throw new Error('The calling translation unit must be a .cu file, not a standalone header.');}
                     unitSource = await readFile(unitPath, 'utf8');
                     if (!/\bint\s+main\s*\(/.test(unitSource)) {
-                        throw new Error(`The selected calling translation unit ${unitPath} has no main function. Provide a runnable .cu program with the required data and launch configuration.`);
+                        throw new Error(`The selected CUDA calling translation unit ${unitPath} has no main function. Provide a CUDA source translation unit with a runnable main, required data, and launch configuration.`);
                     }
                 }
                 const selectedDeclaration = input.selected
@@ -3365,6 +3559,21 @@ async function profileExistingCudaSource(context: vscode.ExtensionContext, input
                     const largestMeasuredOperation = measuredOperations[0];
                     const reportDirectory = path.join(input.workspaceRoot, '.kernelpilot', 'profiles');
                     await mkdir(reportDirectory, { recursive: true });
+                    const nvidiaConfig = vscode.workspace.getConfiguration('kernelpilot');
+                    let nvidiaDiagnosticResult: Awaited<ReturnType<typeof runNvidiaDiagnostics>> | undefined;
+                    if (nvidiaConfig.get<boolean>('nvidiaDiagnosticsEnabled', false)) {
+                        output.appendLine('Running Nsight Compute and configured Compute Sanitizer checks separately from CUDA event timing…');
+                        nvidiaDiagnosticResult = await runNvidiaDiagnostics(executable, invocationArguments, {
+                            ncuPath: nvidiaConfig.get<string>('ncuPath', 'ncu'), sanitizerPath: nvidiaConfig.get<string>('computeSanitizerPath', 'compute-sanitizer'),
+                            reportDirectory: path.resolve(input.workspaceRoot, nvidiaConfig.get<string>('nvidiaDiagnosticsReportDirectory', '.kernelpilot/nvidia-diagnostics')),
+                            timeoutMs: nvidiaConfig.get<number>('nvidiaDiagnosticsTimeoutMs', 120000),
+                            kernelRegex: input.selected ? [...new Set(samples.map(sample => sample.kernel))].map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') : nvidiaConfig.get<string>('ncuKernelRegex', '.*'),
+                            launchCount: nvidiaConfig.get<number>('ncuLaunchCount', 1), metrics: nvidiaConfig.get<string[]>('ncuMetrics', []),
+                            sanitizers: nvidiaConfig.get<SanitizerTool[]>('computeSanitizerTools', []), cwd: temporaryDirectory, signal: diagnosticsAbort.signal
+                        });
+                        output.appendLine(`Nsight Compute: ${nvidiaDiagnosticResult.report.profile.status}; JSON report: ${nvidiaDiagnosticResult.jsonPath}`);
+                        for (const item of nvidiaDiagnosticResult.report.sanitizers) {output.appendLine(`Compute Sanitizer ${item.tool}: ${item.status}${item.exitCode === null ? '' : ` (exit ${item.exitCode})`}`);}
+                    }
                     const profilePath = path.join(reportDirectory, `cuda-source-profile-${Date.now()}.json`);
                     const metadata = {
                         schema: 'kernelpilot-bottleneck-profile-v1', profileKind: 'existing-cuda-source', createdAt: new Date().toISOString(),
@@ -3380,6 +3589,7 @@ async function profileExistingCudaSource(context: vscode.ExtensionContext, input
                         executionIsolation: runIsolation, correctness: 'Result correctness not independently verified',
                         originalProgramExitCode: 0, launchSites: instrumented.launchSites, summaries, rawSamples: samples,
                         rawCopySamples: copySamples,
+                        nvidiaDiagnostics: nvidiaDiagnosticResult ? { report: nvidiaDiagnosticResult.report, jsonPath: nvidiaDiagnosticResult.jsonPath, rawOutputPath: nvidiaDiagnosticResult.rawPath } : null,
                         rawProgramOutput: measuredOutputs.flatMap(runOutput => runOutput.stdout.split(/\r?\n/).filter(line => /^(?:KP_PROFILE_KERNEL|KP_PROFILE_COPY|KP_PROFILE_RUN),/.test(line))),
                         findings: [{ size: 0, status: 'unresolved', reason: 'Only kernel launches and asynchronous copies are measured; other execution phases are unavailable, so whole-program phase dominance is not assessed.' }],
                         limitations: ['No independent CPU oracle or correctness test was run.', 'Only asynchronous cudaMemcpyAsync calls are phase-timed; synchronous cudaMemcpy, allocations, and host preparation are not separately measured.', 'Per-operation event durations from different streams can overlap and are not summed into a total.', 'Each warmup and measured repetition executes the original main; external side effects therefore repeat.', 'Warmup runs use separate processes, so they do not guarantee reuse of an in-process CUDA context or loaded modules.', 'CUDA events are added on each launch/copy stream and the added instrumentation can perturb very short operations.']

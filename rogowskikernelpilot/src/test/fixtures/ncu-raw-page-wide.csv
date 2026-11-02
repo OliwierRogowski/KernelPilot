@@ -1,0 +1,4 @@
+"ID","Process ID","Kernel Name","Kernel Time","sm__throughput.avg.pct_of_peak_sustained_elapsed","dram__throughput.avg.pct_of_peak_sustained_elapsed"
+"","","","","%","%"
+"0","123","first kernel","2026-11-02 12:00:00","70","80"
+"1","123","second kernel","2026-11-02 12:00:01","50","N/A"

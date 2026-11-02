@@ -19,6 +19,7 @@ interface CandidateRunOptions {
     allowGpu?: boolean;
     requireFilesystemIsolation?: boolean;
     allowOpenNetwork?: boolean;
+    signal?: AbortSignal;
 }
 
 export interface CandidateIsolationStatus {
@@ -195,7 +196,8 @@ export async function runCandidateProgram(
                 cwd: options.cwd,
                 env: environment,
                 maxBuffer: options.maxBuffer,
-                timeout: options.timeout
+                timeout: options.timeout,
+                signal: options.signal
             });
             return {
                 stdout: result.stdout,
@@ -211,7 +213,7 @@ export async function runCandidateProgram(
     }
 
     const result = await execFileAsync(executable, args, {
-        cwd: options.cwd, env: environment, maxBuffer: options.maxBuffer, timeout: options.timeout
+                cwd: options.cwd, env: environment, maxBuffer: options.maxBuffer, timeout: options.timeout, signal: options.signal
     });
     return {
         stdout: result.stdout,
@@ -274,7 +276,7 @@ async function runWithResourceLimit(
         ? ['--as=2147483648', '--cpu=60', '--fsize=16777216', '--nproc=256', '--nofile=128', '--', executable, ...args]
         : args;
     const result = await execFileAsync(command, commandArgs, {
-        cwd: options.cwd, env: environment, maxBuffer: options.maxBuffer, timeout: options.timeout
+        cwd: options.cwd, env: environment, maxBuffer: options.maxBuffer, timeout: options.timeout, signal: options.signal
     });
     return {
         stdout: result.stdout,
